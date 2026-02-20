@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="th" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบนิเวศการเรียนรู้เสมือนจริง - หมู่บ้านอนุรักษ์ควายไทย</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    /* ตั้งค่าพื้นฐานให้รองรับการ Scroll แบบนุ่มนวล */
+    html {
+        scroll-behavior: smooth;
+    }
+    body {
+      box-sizing: border-box;
+      font-family: 'Prompt', sans-serif;
+      overflow-x: hidden; /* ป้องกันการเลื่อนซ้ายขวาเกินจำเป็นในมือถือ */
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    * {
+      font-family: 'Prompt', sans-serif;
+      -webkit-tap-highlight-color: transparent; /* ลบสีไฮไลท์เวลาแตะในมือถือ */
+    }
+    
+    /* Container ของแผนที่ */
+    .map-container {
+      position: relative;
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      animation: scaleIn 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+      will-change: transform, opacity; /* ช่วยเพิ่มความลื่นไหลด้วย GPU */
+    }
+    
+    .map-image {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      transition: transform 0.3s ease-out;
+    }
+
+    /* หมุด (Pin) */
+    .pin {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 10;
+      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.4));
+      opacity: 0;
+      animation: pinFadeIn 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards, bounce-pin 3s ease-in-out infinite;
+      will-change: transform, opacity; /* ช่วยเพิ่มความลื่นไหลด้วย GPU */
+    }
+    
+    .pin:hover {
+      transform: translate(-50%, -100%) scale(1.2);
+      z-index: 20;
+    }
+    
+    .pin.active {
+      transform: translate(-50%, -100%) scale(1.3);
+      z-index: 30;
+    }
+    
+    /* ขนาดไอคอนหมุด ปรับตามขนาดจออัตโนมัติ */
+    .pin svg {
+      width: clamp(35px, 6vw, 60px); 
+      height: clamp(35px, 6vw, 60px);
+      position: relative;
+      z-index: 1;
+    }
+    
+    /* วงแหวนเต้นรอบหมุด */
+    .pulse-ring {
+      position: absolute;
+      bottom: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: clamp(15px, 3vw, 25px);
+      height: clamp(5px, 1vw, 10px);
+      border-radius: 50%;
+      animation: pulse 2s ease-out infinite;
+      opacity: 0.6;
+      will-change: transform, opacity;
+    }
+    
+    @keyframes pulse {
+      0% { transform: translateX(-50%) scale(0.5); opacity: 0.8; }
+      100% { transform: translateX(-50%) scale(2.5); opacity: 0; }
+    }
+
+    /* Animation การเด้งของหมุด */
+    @keyframes bounce-pin {
+      0%, 100% { transform: translate(-50%, -100%) translateY(0); }
+      50% { transform: translate(-50%, -100%) translateY(-10px); }
+    }
+
+    /* ควบคุม Delay ให้หมุดเด้งไม่พร้อมกัน ดูเป็นธรรมชาติ */
+    .pin:nth-child(odd) { animation-delay: 0.1s, 0.5s; }
+    .pin:nth-child(even) { animation-delay: 0.3s, 1s; }
+
+    @keyframes pinFadeIn {
+      from { opacity: 0; transform: translate(-50%, -100%) scale(0); }
+      to { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+    }
+
+    /* Tooltip สำหรับแสดงชื่อจุดตอน Hover รองรับทุกหน้าจอ */
+    .pin-tooltip {
+      position: absolute;
+      bottom: 100%; /* ให้อยู่ด้านบนของหมุด */
+      left: 50%;
+      transform: translateX(-50%) translateY(-15px);
+      background: rgba(15, 32, 39, 0.95);
+      color: #fef3c7;
+      padding: clamp(6px, 1.5vw, 8px) clamp(10px, 3vw, 16px);
+      border-radius: 8px;
+      font-size: clamp(12px, 2.5vw, 16px);
+      font-weight: 500;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+      z-index: 50;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      will-change: transform, opacity;
+    }
+
+    /* ลูกศรชี้ลงด้านล่างของ Tooltip */
+    .pin-tooltip::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 6px;
+      border-style: solid;
+      border-color: rgba(15, 32, 39, 0.95) transparent transparent transparent;
+    }
+
+    /* เมื่อเอาเมาส์วาง (คอมพิวเตอร์) หรือบังคับเปิด (มือถือ) ให้แสดง Tooltip */
+    .pin:hover .pin-tooltip,
+    .pin.force-show-tooltip .pin-tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(-5px);
+    }
+
+    /* Overlay พื้นหลังเวลาเปิด Modal */
+    .modal-overlay, .game-menu-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85); /* พื้นหลังดำจางๆ */
+      backdrop-filter: blur(8px); /* เบลอฉากหลัง */
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      will-change: opacity;
+    }
+
+    .modal-overlay.active, .game-menu-overlay.active {
+      display: flex;
+      opacity: 1;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* กล่องเนื้อหาใน Modal */
+    .modal-content, .game-menu-content {
+      position: relative;
+      max-width: 600px;
+      width: 90%; /* กว้าง 90% ของจอเสมอสำหรับมือถือ */
+      max-height: 90vh; /* สูงไม่เกิน 90% ของจอ */
+      overflow-y: auto;
+      transform: scale(0.9);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      will-change: transform;
+    }
+    
+    .modal-overlay.active .modal-content,
+    .game-menu-overlay.active .game-menu-content {
+        transform: scale(1);
+    }
+    
+    /* เมนูเกม */
+    .game-menu-content {
+        max-width: 400px;
+        background: linear-gradient(135deg, #2e1065 0%, #db2777 100%);
+        padding: 30px;
+        border: 2px solid rgba(255,255,255,0.2);
+        text-align: center;
+    }
+
+    .modal-poster {
+      width: 100%;
+      height: auto;
+      border-radius: 16px 16px 0 0; /* โค้งมนเฉพาะด้านบน */
+      display: block;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      border: none;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #fff;
+      z-index: 1001;
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    .modal-close:hover {
+      background: rgba(220, 38, 38, 0.9);
+      transform: scale(1.1);
+    }
+
+    /* ปุ่มเกมลอย (Floating Button) */
+    .game-btn-float {
+      cursor: pointer;
+      animation: bounce-slow 3s infinite;
+      box-shadow: 0 10px 25px rgba(255, 126, 95, 0.6);
+      /* ปรับขนาดตามจอ */
+      padding: clamp(10px, 3vw, 16px) clamp(20px, 5vw, 24px);
+      font-size: clamp(14px, 4vw, 18px);
+      will-change: transform;
+    }
+    .game-btn-float:hover {
+      transform: scale(1.05);
+      animation-play-state: paused;
+    }
+    
+    @keyframes bounce-slow {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+    
+    /* ตัวเลือกในเมนูเกม */
+    .game-option {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        background: rgba(255,255,255,0.1);
+        padding: 15px;
+        border-radius: 12px;
+        margin-bottom: 15px;
+        transition: all 0.2s;
+        border: 1px solid rgba(255,255,255,0.1);
+        text-decoration: none;
+        color: white;
+    }
+    .game-option:active {
+        transform: scale(0.98); /* เวลากดในมือถือจะยุบลงนิดนึง */
+    }
+    .game-option:hover {
+        background: rgba(255,255,255,0.2);
+        transform: translateX(5px);
+    }
+    .game-icon {
+        font-size: 24px;
+        background: white;
+        min-width: 45px;
+        height: 45px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #333;
+    }
+    
+    /* ปุ่มควบคุมเสียง */
+    .audio-control {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        z-index: 40;
+        background: rgba(0,0,0,0.5);
+        color: white;
+        padding: 10px;
+        border-radius: 50%;
+        backdrop-filter: blur(5px);
+        -webkit-backdrop-filter: blur(5px);
+        cursor: pointer;
+        transition: all 0.3s;
+        border: 1px solid rgba(255,255,255,0.2);
+    }
+    .audio-control:hover {
+        background: rgba(0,0,0,0.8);
+        transform: scale(1.1);
+    }
+    
+    /* Animation พื้นฐาน */
+    @keyframes scaleIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    
+    .fade-enter { opacity: 0; transform: scale(0.98); }
+    .fade-enter-active { opacity: 1; transform: scale(1); transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .fade-exit { opacity: 1; transform: scale(1); }
+    .fade-exit-active { opacity: 0; transform: scale(1.02); transition: opacity 0.4s ease, transform 0.4s ease; pointer-events: none; }
+
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+ </head>
+ <body class="h-full bg-gradient-to-br from-amber-900 via-yellow-900 to-green-900 overflow-hidden" style="background-attachment: fixed">
+  
+ <audio id="bg-music" loop preload="auto">
+      <source src="thai-music.mp3" type="audio/mp3">
+      Your browser does not support the audio element.
+  </audio>
+
+  <div id="welcome-screen" class="fixed inset-0 w-full h-full flex items-center justify-center p-4 md:p-8 z-50 overflow-y-auto" style="background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);">
+   <div class="w-full max-w-2xl py-10">
+    <div class="mb-8 md:mb-12 h-1 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 rounded-full"></div>
+    <div class="text-center mb-8 md:mb-10">
+     <div class="inline-block p-6 bg-gradient-to-br from-amber-400/20 to-orange-500/20 rounded-2xl border border-amber-400/30 backdrop-blur-sm">
+      <div class="text-6xl md:text-7xl" style="filter: drop-shadow(0 4px 8px rgba(251, 191, 36, 0.3))">
+       🐃
+      </div>
+     </div>
+    </div>
+    <h1 class="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-200 to-yellow-100 mb-6 text-center leading-tight">ระบบนิเวศการเรียนรู้เสมือนจริง</h1>
+    <div class="text-center mb-8 border-l-4 border-r-4 border-amber-400/40 pl-6 pr-6 py-4 bg-white/5 backdrop-blur-sm rounded-lg mx-4">
+     <p class="text-xl md:text-3xl font-bold text-amber-100 mb-3">หมู่บ้านอนุรักษ์ควายไทย</p>
+     <div class="h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent mb-3"></div>
+     <p class="text-base md:text-lg text-amber-200/80">อนุรักษ์วัฒนธรรมท้องถิ่น ยืนยาวเฉพาะท้องถิ่น ภูมิปัญญาท้องถิ่นไทย</p>
+    </div>
+    <p class="text-center text-base md:text-lg text-gray-200 mb-10 leading-relaxed max-w-xl mx-auto px-4">สำรวจและเรียนรู้เกี่ยวกับสถานที่สำคัญ แหล่งทรัพยากร และวัฒนธรรมท้องถิ่นที่มีความหมายต่อชุมชนของเรา</p>
+    <div class="text-center mb-12">
+        <button onclick="enterMap()" class="group relative px-10 md:px-16 py-3 md:py-4 bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-500 hover:from-amber-400 hover:via-yellow-300 hover:to-orange-400 text-white font-bold text-lg md:text-xl rounded-xl shadow-2xl hover:shadow-3xl transition-all duration-300 transform hover:scale-105 active:scale-95 overflow-hidden">
+          <div class="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+          <span class="relative flex items-center justify-center gap-2">
+           <svg class="w-6 h-6" fill="currentColor" viewbox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+           </svg> เข้าสู่ระบบ 
+          </span> 
+        </button>
+    </div>
+   </div>
+  </div>
+
+  <div id="map-screen" class="fixed inset-0 w-full h-full overflow-y-auto overflow-x-hidden hidden" style="background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);">
+   <div class="min-h-full p-4 md:p-10 relative pb-24"> <div class="mb-4 md:mb-6 flex justify-start">
+        <button onclick="goBack()" class="group flex items-center gap-2 px-4 md:px-6 py-2 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg backdrop-blur-sm transition-all active:scale-95">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg><span>กลับ</span> 
+        </button>
+    </div>
+
+    <header class="text-center mb-6 md:mb-8">
+     <div class="text-4xl md:text-5xl mb-3 animate-bounce" style="animation-delay: 0s">🐃</div>
+     <h1 id="map-title" class="text-2xl md:text-4xl font-bold text-amber-100 mb-2" style="text-shadow: 2px 2px 8px rgba(0,0,0,0.5)">ระบบนิเวศการเรียนรู้เสมือนจริง</h1>
+     <p class="text-lg md:text-2xl font-semibold text-amber-200 mb-2">หมู่บ้านอนุรักษ์ควายไทย</p>
+     <p class="text-amber-300/80 text-sm md:text-lg">แตะที่หมุดเพื่อดูรายละเอียด</p>
+    </header>
+
+    <div class="map-container" id="map-wrapper">
+        <img src="https://i.postimg.cc/LXktNwZV/Map.png" alt="Interactive Map" class="map-image" id="map-image" loading="lazy" decoding="async"> 
+        <div id="pins-container"></div>
+    </div>
+    
+    <button onclick="toggleMusic()" class="audio-control" id="audio-btn" title="ปิด/เปิดเพลง">
+        <svg id="icon-sound-on" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path></svg>
+        <svg id="icon-sound-off" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"></path></svg>
+    </button>
+
+    <button onclick="openGameMenu()" class="game-btn-float fixed bottom-6 right-6 z-50 flex items-center gap-2 md:gap-3 bg-gradient-to-r from-purple-600 via-pink-600 to-red-500 text-white rounded-full font-bold shadow-2xl transition-all border-2 border-white/20">
+        <span class="text-2xl md:text-3xl">🎮</span>
+        <span>กิจกรรมสันทนาการ</span>
+    </button>
+
+    <div class="game-menu-overlay" id="game-menu-overlay">
+        <div class="game-menu-content">
+            <button class="modal-close" onclick="closeGameMenu()">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+            
+            <div class="text-4xl mb-4">🎪</div>
+            <h2 class="text-xl md:text-2xl font-bold text-white mb-6">เลือกเกมที่ต้องการเล่น</h2>
+            
+            <a href="https://buffalogames.my.canva.site/c23bma81j3h24myd" target="_blank" rel="noopener noreferrer" class="game-option">
+                <div class="game-icon">⚡</div>
+                <div class="text-left">
+                    <div class="font-bold text-base md:text-lg">Buffalo Memory Card</div>
+                    <div class="text-xs text-gray-300"></div>
+                </div>
+            </a>
+
+            <a href="https://buffalogames.my.canva.site/" target="_blank" rel="noopener noreferrer" class="game-option">
+                <div class="game-icon">🎯</div>
+                <div class="text-left">
+                    <div class="font-bold text-base md:text-lg">Buffalo Run</div>
+                    <div class="text-xs text-gray-300">แบบนี้ต้องพาวิ่งสินะ</div>
+                </div>
+            </a>
+
+            <a href="https://vegetables-fiuits-market.my.canva.site/c06mkpj7jt501dqz" target="_blank" rel="noopener noreferrer" class="game-option">
+                <div class="game-icon">🧩</div>
+                <div class="text-left">
+                    <div class="font-bold text-base md:text-lg">Buffalo Matching</div>
+                    <div class="text-xs text-gray-300">หาคู่น้องให้เจอกันดีกว่า</div>
+                </div>
+            </a>
+
+            <a href="https://buffalogames.my.canva.site/c20tehx3gymz8c2j" target="_blank" rel="noopener noreferrer" class="game-option">
+                <div class="game-icon">❓</div>
+                <div class="text-left">
+                    <div class="font-bold text-base md:text-lg">Buffalo Quiz V.1</div>
+                    <div class="text-xs text-gray-300">จะตอบถูกมั้ยนะ?</div>
+                </div>
+            </a>
+            
+            <a href="https://buffalogames.my.canva.site/c20r8x393w5zacfv" target="_blank" rel="noopener noreferrer" class="game-option">
+                <div class="game-icon">✨</div>
+                <div class="text-left">
+                    <div class="font-bold text-base md:text-lg">Buffalo Quiz V.2</div>
+                    <div class="text-xs text-gray-300">มาลุยกันต่อกับข้อคำถาม</div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-overlay">
+     <div class="modal-content">
+      <button class="modal-close" onclick="closeModal()">
+       <svg width="24" height="24" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+      </button> 
+      <img id="modal-poster" class="modal-poster" src="" alt="Poster" loading="lazy" decoding="async">
+      <div id="modal-video-container" class="w-full bg-black" style="display: none;">
+       <div style="position: relative; width: 100%; padding-bottom: 56.25%;">
+        <iframe id="modal-video" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 16px 16px 0 0;" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+       </div>
+      </div>
+     </div>
+    </div>
+
+    <div class="mt-12 text-center pb-8">
+     <div class="flex justify-center gap-6 text-3xl md:text-5xl opacity-70 animate-pulse"><span>🐃</span> <span>🌾</span> <span>🐃</span></div>
+     <p class="text-amber-200/60 text-xs md:text-sm mt-4 font-semibold">ยืนยาวเฉพาะท้องถิ่น ภูมิปัญญาท้องถิ่นของไทย</p>
+    </div>
+
+   </div>
+  </div>
+
+  <script>
+    // --- State Management ---
+    const welcomeScreen = document.getElementById('welcome-screen');
+    const mapScreen = document.getElementById('map-screen');
+    const audio = document.getElementById('bg-music');
+    let isMusicPlaying = false;
+    let activeTooltipPin = null; // เก็บค่าสถานะว่าตอนนี้โชว์ชื่อหมุดไหนอยู่ (สำหรับมือถือ)
+
+    // --- Music Controls ---
+    function playMusic() {
+        audio.volume = 0.5; // Set volume to 50%
+        audio.play().then(() => {
+            isMusicPlaying = true;
+            updateAudioIcon();
+        }).catch(error => {
+            console.log("Audio play failed (user interaction needed first):", error);
+        });
+    }
+
+    function stopMusic() {
+        audio.pause();
+        audio.currentTime = 0; // Reset music to beginning
+        isMusicPlaying = false;
+        updateAudioIcon();
+    }
+
+    function toggleMusic() {
+        if (isMusicPlaying) {
+            audio.pause();
+            isMusicPlaying = false;
+        } else {
+            audio.play();
+            isMusicPlaying = true;
+        }
+        updateAudioIcon();
+    }
+
+    function updateAudioIcon() {
+        const iconOn = document.getElementById('icon-sound-on');
+        const iconOff = document.getElementById('icon-sound-off');
+        if (isMusicPlaying) {
+            iconOn.classList.remove('hidden');
+            iconOff.classList.add('hidden');
+        } else {
+            iconOn.classList.add('hidden');
+            iconOff.classList.remove('hidden');
+        }
+    }
+
+    // --- Transition Functions ---
+    function enterMap() {
+      // Trigger Music Here!
+      playMusic();
+
+      // Add exit class to welcome screen
+      welcomeScreen.classList.add('fade-exit-active');
+      
+      setTimeout(() => {
+        welcomeScreen.classList.add('hidden');
+        welcomeScreen.classList.remove('fade-exit-active');
+        
+        mapScreen.classList.remove('hidden');
+        
+        // Trigger reflow safely
+        window.requestAnimationFrame(() => {
+            mapScreen.classList.add('fade-enter');
+            window.requestAnimationFrame(() => {
+                mapScreen.classList.add('fade-enter-active');
+                mapScreen.classList.remove('fade-enter');
+            });
+        });
+      }, 400); // Wait for transition
+    }
+
+    function goBack() {
+      // ** Stop Music when going back **
+      stopMusic();
+
+      mapScreen.classList.add('fade-exit-active');
+      
+      setTimeout(() => {
+        mapScreen.classList.add('hidden');
+        mapScreen.classList.remove('fade-exit-active', 'fade-enter-active');
+        
+        welcomeScreen.classList.remove('hidden');
+        
+        window.requestAnimationFrame(() => {
+            welcomeScreen.classList.add('fade-enter');
+            window.requestAnimationFrame(() => {
+                welcomeScreen.classList.add('fade-enter-active');
+                welcomeScreen.classList.remove('fade-enter');
+            });
+        });
+      }, 400);
+    }
+
+    // --- Data: 10 Locations ---
+    const locations = [
+      {
+        id: 1,
+        number: 1,
+        name: "จุดเริ่มต้นแห่งการอนุรักษ์ควายไทย",
+        color: "#f43f5e",
+        position: { x: 75, y: 75 },
+        poster: "https://i.postimg.cc/Cxj5Wc4n/praw-t-khwam-pe-nma.png",
+        youtubeId: null
+      },
+      {
+        id: 9,
+        number: 9,
+        name: "คุณค่าควายไทย สัตว์คู่แผ่นดิน",
+        color: "#f43f5e",
+        position: { x: 60, y: 75 },
+        poster: "https://i.postimg.cc/L52Qn0mq/ค_ณค_าควายไทย_ส_ตว_ค_แผ_นด_น.png",
+        youtubeId: null
+      },
+      {
+        id: 2,
+        number: 2,
+        name: "สื่อการเรียนรู้เสมือนจริง เรื่อง หมู่บ้านอนุรักษ์ควายไทย",
+        color: "#10b981",
+        position: { x: 64, y:60 },
+        poster: "https://i.postimg.cc/NF3gqZkN/Buffalo-Farm.jpg",
+        youtubeId: "d5BYYDMLNu4&t"
+      },
+      {
+        id: 3,
+        number: 3,
+        name: "ความสามารถน้องควาย",
+        color: "#f59e0b",
+        position: { x: 60, y: 30 },
+        poster: "https://i.postimg.cc/CxmTBDMh/ความสามารถน_องควาย.png",
+        youtubeId: null
+      },
+      {
+        id: 4,
+        number: 4,
+        name: "ควายไทยมรดกทางวัฒนธรรม",
+        color: "#f59e0b",
+        position: { x: 45, y: 20 },
+        poster: "https://i.postimg.cc/q7prHQ3D/ควายไทยมรดกทางว_ฒนธรรมของชาต.png",
+        youtubeId: null
+      },
+      {
+        id: 10,
+        number: 10,
+        name: "การเปลี่ยนแปลงจำนวนประชากรควายไทย",
+        color: "#f59e0b",
+        position: { x: 50, y: 40 },
+        poster: "https://i.postimg.cc/SKm4bVMf/การเปล_ยนแปลงจำนวนประชากรควายไทย.png",
+        youtubeId: null
+      },
+      {
+        id: 5,
+        number: 5,
+        name: "สื่อการเรียนรู้เสมือนจริง เรื่อง ความรู้พันธุ์ควายไทย",
+        color: "#0ea5e9",
+        position: { x: 25, y: 30 },
+        poster: "https://i.postimg.cc/3x7tN2mY/Water.jpg",
+        youtubeId: "9nzu_CXBTiM"
+      },
+      {
+        id: 6,
+        number: 6,
+        name: "สื่อการเรียนรู้เสมือนจริง เรื่อง การแสดงควายไทย",
+        color: "#f43f5e",
+        position: { x: 35, y: 45 },
+        poster: "https://i.postimg.cc/vB9RyVmg/Cultural-Center.jpg",
+        youtubeId: "dkxKZdsjT7U"
+      },
+      {
+        id: 7,
+        number: 7,
+        name: "ความแตกต่างพันธุ์ควายไทย",
+        color: "#10b981",
+        position: { x: 20, y: 50},
+        poster: "https://i.postimg.cc/DwBkJsfw/ความแตกต_างพ_นธ_ควายไทย.png",
+        youtubeId: null
+      },
+      {
+        id: 8,
+        number: 8,
+        name: "การแสดงน้องควาย",
+        color: "#0ea5e9",
+        position: { x: 45, y: 55 },
+        poster: "https://i.postimg.cc/L8NKYf44/การแสดงน_องควาย.png",
+        youtubeId: null
+      }
+    ];
+
+    // --- Pin Creation ---
+    const pinsContainer = document.getElementById('pins-container');
+
+    function createPins() {
+      // ใช้ DocumentFragment เพื่อสร้าง DOM ให้เสร็จก่อนวาดลงหน้าจอ (เพิ่มประสิทธิภาพ)
+      const fragment = document.createDocumentFragment();
+      
+      locations.forEach(loc => {
+        const pinEl = document.createElement('div');
+        pinEl.className = 'pin';
+        pinEl.id = `pin-${loc.id}`;
+        pinEl.style.left = `${loc.position.x}%`;
+        pinEl.style.top = `${loc.position.y}%`;
+        
+        // เพิ่ม Tooltip ไว้ด้านใน Pin
+        pinEl.innerHTML = `
+          <div class="pin-tooltip">${loc.name}</div>
+          <div class="pulse-ring" style="background: ${loc.color}"></div>
+          <svg viewBox="0 0 24 32" fill="none">
+            <path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="${loc.color}" stroke="white" stroke-width="1.5"/>
+            <circle cx="12" cy="12" r="6" fill="white"/>
+          </svg>
+        `;
+        
+        pinEl.addEventListener('click', (e) => {
+          e.stopPropagation(); // ป้องกันการกระจายของ event
+          
+          // เช็คว่าผู้ใช้อยู่บนอุปกรณ์ที่ไม่มีเมาส์ (เช่น มือถือ หรือ แท็บเล็ต) ใช่หรือไม่
+          const isTouchDevice = window.matchMedia("(hover: none)").matches;
+
+          if (isTouchDevice) {
+            // ระบบสัมผัส: แตะครั้งแรกโชว์ชื่อ แตะครั้งที่สองเปิดหน้าต่าง
+            if (activeTooltipPin !== pinEl) {
+              // ถ้ายังไม่โชว์ชื่อ: ซ่อนชื่ออันเก่า (ถ้ามี) แล้วโชว์ชื่อของหมุดนี้แทน
+              if (activeTooltipPin) {
+                activeTooltipPin.classList.remove('force-show-tooltip');
+              }
+              pinEl.classList.add('force-show-tooltip');
+              activeTooltipPin = pinEl;
+            } else {
+              // ถ้าโชว์ชื่ออยู่แล้ว (แตะครั้งที่ 2 ที่หมุดเดิม): ปิดชื่อแล้วเปิดหน้าต่าง Pop-up
+              pinEl.classList.remove('force-show-tooltip');
+              activeTooltipPin = null;
+              showModal(loc);
+            }
+          } else {
+            // คอมพิวเตอร์ที่มีเมาส์: คลิกปุ๊บ เปิดหน้าต่าง Pop-up ทันที (เพราะชี้เพื่อดูชื่อได้อยู่แล้ว)
+            showModal(loc);
+          }
+        });
+        
+        fragment.appendChild(pinEl);
+      });
+      
+      pinsContainer.innerHTML = '';
+      pinsContainer.appendChild(fragment);
+    }
+
+    // แตะที่พื้นที่ว่างๆ ในแผนที่เพื่อปิดชื่อหมุด (สำหรับมือถือ)
+    document.getElementById('map-wrapper').addEventListener('click', () => {
+      if (activeTooltipPin) {
+        activeTooltipPin.classList.remove('force-show-tooltip');
+        activeTooltipPin = null;
+      }
+    });
+
+    // --- Modal Logic ---
+    const modalOverlay = document.getElementById('modal-overlay');
+    const gameMenuOverlay = document.getElementById('game-menu-overlay');
+
+    function showModal(location) {
+      if (location.youtubeId) {
+        window.open(`https://www.youtube.com/watch?v=${location.youtubeId}`, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      const poster = document.getElementById('modal-poster');
+      const videoContainer = document.getElementById('modal-video-container');
+      const videoFrame = document.getElementById('modal-video');
+
+      // ล้างค่าเดิมเพื่อไม่ให้โหลดค้าง
+      videoFrame.src = '';
+
+      poster.src = location.poster;
+      poster.style.display = 'block';
+      videoContainer.style.display = 'none';
+
+      modalOverlay.classList.add('active');
+      document.body.style.overflow = 'hidden'; 
+    }
+
+    function closeModal() {
+      const videoFrame = document.getElementById('modal-video');
+      modalOverlay.classList.remove('active');
+      document.body.style.overflow = ''; // คืนค่าเริ่มต้นให้ scroll
+      
+      // Delay clearing src slightly to avoid visual glitch
+      setTimeout(() => { 
+          videoFrame.src = ''; 
+          document.getElementById('modal-poster').src = ''; // เคลียร์รูปภาพกันหน่วยความจำค้าง
+      }, 300);
+    }
+
+    function openGameMenu() {
+        gameMenuOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeGameMenu() {
+        gameMenuOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // Event Listeners for closing modals
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) closeModal();
+    });
+
+    gameMenuOverlay.addEventListener('click', (e) => {
+        if (e.target === gameMenuOverlay) closeGameMenu();
+    });
+
+    // --- ระบบจัดการเพลงเมื่อสลับแท็บ (Page Visibility API) ---
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (isMusicPlaying && !audio.paused) {
+          audio.pause();
+        }
+      } else {
+        if (isMusicPlaying && audio.paused) {
+          audio.play().catch(err => console.log("Auto-play prevented:", err));
+        }
+      }
+    });
+
+    // Initialize
+    createPins();
+
+  </script>
+ </body>
+</html>
